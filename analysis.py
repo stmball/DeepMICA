@@ -4,7 +4,7 @@ import more_itertools as mit
 from scipy.stats import ks_2samp
 from ndtest import ks2d2s
 import pandas as pd
-from generate import MarkovLog, Network
+from .generate import MarkovLog, Network
 
 """ 
 
