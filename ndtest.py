@@ -61,9 +61,9 @@ def ks2d2s(x1, y1, x2, y2, nboot=None, extra=False):
             d[i] = avgmaxdist(x[ix1], y[ix1], x[ix2], y[ix2])
         p = np.sum(d > D).astype('f') / nboot
     if extra:
-        return {'statistic': D, 'pvalue': p } 
+        return (D, p)
     else:
-        return {'pvalue': p}
+        return p
 
 
 def avgmaxdist(x1, y1, x2, y2):

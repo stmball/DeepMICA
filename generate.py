@@ -150,6 +150,14 @@ def createCycle(network, stateClasses):
     network[j][i] = 1
     return network
 
+def checkRandomCanonical(randoms, opens, closes):
+    for block in [randoms[0:opens, opens:], randoms[opens:, 0:opens]]:
+        if not np.array_equal(np.sum(block, axis=0), np.sort(np.sum(block, axis=0))):
+            return False
+        elif not np.array_equal(np.sum(block, axis=1), np.sort(np.sum(block, axis=1))):
+            return False
+        else:
+            return True
 
 def sample_from_rate(rate):
     """
@@ -169,7 +177,7 @@ def sample_from_rate(rate):
     if rate <= 0:
         return np.inf
     else:
-        return np.random.exponential(scale=rate)
+        return np.random.exponential(scale=1/rate)
 
 
 class SquareRootScale(mscale.ScaleBase):
@@ -358,7 +366,7 @@ class Network:
             connectedNodes.append(joinee)
             disconnectedNodes.remove(joinee)
 
-    def randomiseWeights(self, mag):
+    def randomiseWeights(self, mag, preserveCanonical=False):
         """
 
         Method for randomising the transition rate matrix for a network up to a given magnitude
@@ -368,16 +376,29 @@ class Network:
 
         """
 
+        adj = self.adjMatrix
         # Generate random numpy matrix with maximal possible value of the mag arguement
-        randoms = np.multiply(self.adjMatrix, np.random.rand(
-            *self.adjMatrix.shape) * mag)
 
+        if preserveCanonical:
+            opens = list(self.state_dict.values()).count(0)
+            closes = list(self.state_dict.values()).count(1)
+            flag = True
+            while flag:
+                # TODO: Extend to multi channel
+                randoms = np.multiply(adj, np.random.rand(*adj.shape) * mag)
+                flag = not checkRandomCanonical(randoms, opens, closes)
+
+
+            
+        else:
+            randoms = np.multiply(adj, np.random.rand(*adj.shape) * mag)
         # Fix the diagonal to be the negative sum of all other entries in that row
         for i in range(randoms.shape[0]):
-            randoms[i, i] = -np.sum(randoms[i, :] - randoms[i, i])
+            randoms[i, i] = -1 * (np.sum(randoms[i, :]) - randoms[i, i])
 
         # Set new transition matrix
         self.transMatrix = randoms
+        return self
 
     def randomiseStates(self):
         """
@@ -437,8 +458,7 @@ class Network:
         _non_zeros = self.transMatrix != 0
         newMatrix = self.adjMatrix.copy()
         newMatrix[_non_zeros] = 1
-        self.adjMatrix = newMatrix
-        return self
+        return newMatrix
 
     def randomiseAll(self, mag=1, num_cycles=0):
         self.randomiseAdj()
@@ -461,6 +481,8 @@ class Network:
         rearrangeMap = []
         partitions = []
         for (i, j) in sorted(_reference_dict.items(), key=lambda item: item[0]):
+            j.sort(key=lambda item: transMatrix[item,item])
+            
             # Sort out partitioned matrix for diagonalisation
             newPartition = np.array([transMatrix[m, n] for m, n in it.product(
                 j, repeat=2)]).reshape((len(j), len(j)))
@@ -476,8 +498,8 @@ class Network:
 
         newNewTrans = zeroSmalls(np.linalg.inv(
             diagonaliser) @ newTransMatrix @ diagonaliser)
-
-        return Network(states=newNewTrans.shape[0], transMatrix=newNewTrans, state_dict={str(v): v for v in rearrangeMap})
+        print(rearrangeMap)
+        return Network(states=newNewTrans.shape[0], transMatrix=newNewTrans, state_dict={f'{str(v)}': self.state_dict[list(self.state_dict.keys())[v]] for v in rearrangeMap})
 
     # From http://www.blackarbs.com/blog/introduction-hidden-markov-models-python-networkx-sklearn/2/9/2017
 
@@ -531,8 +553,6 @@ class MarkovLog:
 
     def __init__(self, Network):
         self.network = Network
-        self.transition_matrix = Network.transMatrix
-        self.state_dict = Network.state_dict
 
         self.time = None
         self.sample_rate = None
@@ -544,29 +564,26 @@ class MarkovLog:
         self.sample_data_graph = None
 
     def simulateDiscrete(self, time):
-        if self.transition_matrix is None or self.state_dict is None:
+        if self.network.transMatrix is None or self.network.state_dict is None:
             raise TypeError(
                 'No model loaded. Please load a model using the load_from_network or load_from_csv methods.')
         else:
             self.time = time
             # Using native lists for increased performance
             histList = []
-            states_keys = list(self.state_dict.keys())
-            states_values = list(self.state_dict.values())
+            states_keys = list(self.network.state_dict.keys())
+            states_values = list(self.network.state_dict.values())
 
             # Randomly select first state
-            current_state = random.randint(0, len(self.transition_matrix))
-
+            current_state = random.randint(0, len(self.network.transMatrix) - 1)
             clock = 0
             with tqdm(total=time) as pbar:
                 while clock < time:
                     # Sample transitions
-                    sojourn_times = [sample_from_rate(
-                        rate) for rate in self.transition_matrix[current_state]]
-
+                    sojourn_times = [sample_from_rate(rate) for rate in self.network.transMatrix[current_state]]
                     # Identify next state
                     next_state_index = min(
-                        range(len(self.transition_matrix)), key=lambda x: sojourn_times[x])
+                        range(len(self.network.transMatrix)), key=lambda x: sojourn_times[x])
 
                     # Add histories
                     sojourn_time = sojourn_times[next_state_index]
@@ -627,9 +644,7 @@ class MarkovLog:
             'float') + sd * np.random.randn(ctsHistory[:, 1].shape[0])
         # Adding drift to the data.
         if drift:
-            noisy += drift[0] * \
-                np.sin(2 * np.pi * drift[1] *
-                       ctsHistoryDF['Time'].values.astype('float'))
+            noisy += drift[0] * np.sin(2 * np.pi * drift[1] * ctsHistoryDF['Time'].values.astype('float'))
         ctsHistoryDF = pd.DataFrame(
             ctsHistory, columns=['State', 'Channels', 'Time'])
         ctsHistoryDF["Noisy Current"] = noisy
@@ -747,4 +762,5 @@ class MarkovLog:
         ax1.legend()
         ax2.legend()
         plt.show()
-        return (openDwells, closedDwells, f)
+        return (openDwells, closedDwells, f)   
+

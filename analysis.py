@@ -2,9 +2,12 @@ import numpy as np
 import itertools as it
 import more_itertools as mit
 from scipy.stats import ks_2samp
-from ndtest import ks2d2s
+from .ndtest import ks2d2s
 import pandas as pd
 from .generate import MarkovLog, Network
+from sklearn.metrics import confusion_matrix, cohen_kappa_score, f1_score
+
+
 
 """ 
 
@@ -77,14 +80,25 @@ def twoSampleIdealisationTest(idealisation_a, idealisation_b):
     Returns:
         dict: Dictionary containing test statistics and p values for each distribution.
     """
+    try:
+        ks_2samp(singleDwells(idealisation_a, 0), singleDwells(idealisation_b, 0))
+        ks_2samp(singleDwells(idealisation_a, 1), singleDwells(idealisation_b, 1))
+    except:
+        return {
+            'Open': [0,0],
+            'Closed': [0,0],
+            'Open-Closed': [0,0],
+            'Closed-Open': [0,0]
+        }
 
+    else:
     # TODO: Generalise for any number of states (needs n dim KS test - very hard!)
-    return {
-        'Open': ks_2samp(singleDwells(idealisation_a, 0), singleDwells(idealisation_b, 0)),
-        'Closed': ks_2samp(singleDwells(idealisation_a, 1), singleDwells(idealisation_b, 1)),
-        'Open-Closed': ks2d2s(*ks2d2sPrepper(idealisation_a, (0, 1)), *ks2d2sPrepper(idealisation_b, (0, 1)), extra=True),
-        'Closed-Open': ks2d2s(*ks2d2sPrepper(idealisation_a, (1, 0)), *ks2d2sPrepper(idealisation_b, (1, 0)), extra=True),
-    }
+        return {
+            'Open': ks_2samp(singleDwells(idealisation_a, 0), singleDwells(idealisation_b, 0)),
+            'Closed': ks_2samp(singleDwells(idealisation_a, 1), singleDwells(idealisation_b, 1)),
+            'Open-Closed': ks2d2s(*ks2d2sPrepper(idealisation_a, (0, 1)), *ks2d2sPrepper(idealisation_b, (0, 1)), extra=True),
+            'Closed-Open': ks2d2s(*ks2d2sPrepper(idealisation_a, (1, 0)), *ks2d2sPrepper(idealisation_b, (1, 0)), extra=True),
+        }
 
 
 def stateReduce(y_trueArg, y_predictArg, StatesDict):
@@ -96,18 +110,57 @@ def stateReduce(y_trueArg, y_predictArg, StatesDict):
         tuple: Tuple containing state reduction for y_trueArg and y_predictArg
 
     """
-
+    sortedDict = {k: v for k, v in sorted(StatesDict.items(), key=lambda item: item[0])}
     newTest = []
     newPred = []
 
     for i in y_trueArg:
-        newTest.append(list(StatesDict.values())[i])
+        newTest.append(list(sortedDict.values())[i])
 
     for j in y_predictArg:
-        newPred.append(list(StatesDict.values())[j])
+        newPred.append(list(sortedDict.values())[j])
 
-    return (y_trueArg, y_predictArg)
+    return (newTest, newPred)
+
+def allowPermutations(y_trueArg, y_predictArg, StatesDict, metric):
+    mapDict = {v:k for k,v in enumerate(sorted(StatesDict.keys()))}
+    
+    openIndexes = [mapDict[i] for i in mapDict.keys() if StatesDict[i] == 0]
+    closedIndexes = [mapDict[i] for i in mapDict.keys() if StatesDict[i] == 1]
 
 
+    metrics = []
 
+    for openPerm in it.permutations(openIndexes):
+        for closedPerm in it.permutations(closedIndexes):
+            mapping = [x for _,x in sorted(zip(openIndexes + closedIndexes, openPerm + closedPerm))]
+
+            newPred = [mapping[i] for i in y_predictArg]
+            metrics.append(metric(y_trueArg, newPred))
+    return max(metrics)
+
+
+def MICAStats(y_trueArg, y_predictArg, StatesDict):
+    """
+        Function for calculating basic statistics for testing model performance, using both reduced and unreduced states.
+    """
+    
+    if isinstance(StatesDict, dict):
+        trueIdeal, predictIdeal = stateReduce(y_trueArg, y_predictArg, StatesDict)
+        histTest = twoSampleIdealisationTest(trueIdeal, predictIdeal)
+        hist_test_stat_list = [i[0] for i in histTest]
+
+        return {
+            'Unreduced Kappa': cohen_kappa_score(y_trueArg, y_predictArg),
+            'Reduced Kappa': cohen_kappa_score(trueIdeal, predictIdeal),
+            'Unreduced F1': f1_score(y_trueArg, y_predictArg, average='micro'),
+            'Reduced F1': f1_score(trueIdeal, predictIdeal, average='micro'),
+            'histogramMets': histTest,
+            'avgHist': np.mean(list(histTest.values()))
+        }
+    else:
+        return {
+            'Reduced Kappa': cohen_kappa_score(y_trueArg, y_predictArg),
+            'Reduced F1': f1_score(y_trueArg, y_predictArg, average='micro'),
+        }
 
