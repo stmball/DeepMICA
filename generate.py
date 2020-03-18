@@ -287,7 +287,7 @@ class Network:
                     'Adjacency matrix dimensions must agree with number of states.')
 
             # Check for symmetry
-            elif adjMatrix != adjMatrix.T:
+            elif np.array_equal(adjMatrix, adjMatrix.T):
                 raise TypeError('Adjacency matrix must be symmetric!')
 
             # Check that matrix has only 0s and 1s
