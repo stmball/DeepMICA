@@ -562,6 +562,7 @@ class MarkovLog:
         self.discreet_history = None
         self.continuous_history = None
         self.sample_data_graph = None
+        self.dwell_time_graph = None
 
     def simulateDiscrete(self, time):
         if self.network.transMatrix is None or self.network.state_dict is None:
@@ -740,16 +741,13 @@ class MarkovLog:
         openDwells = np.asarray(openDwells)
         closedDwells = np.asarray(closedDwells)
 
-        np.savetxt('opens.csv', openDwells, delimiter=',')
-        np.savetxt('closed.csv', closedDwells, delimiter=',')
-
         f, (ax1, ax2) = plt.subplots(2, 1, sharey=True)
         maxb = np.max([np.max(openDwells), np.max(closedDwells)])
         minb = np.min([np.min(openDwells), np.min(closedDwells)])
         ax1.hist(openDwells, bins=np.logspace(np.log10(minb),
-                                              np.log10(maxb)), color='Blue', label="Open Dwell Times")
+                                              np.log10(maxb)), color='Green', label="Open Dwell Times")
         ax2.hist(closedDwells, bins=np.logspace(np.log10(minb), np.log10(
-            maxb)), color='Green', label="Closed Dwell Times")
+            maxb)), color='Red', label="Closed Dwell Times")
         ax1.set_xlabel('Log Time')
         ax1.set_xscale('log')
         ax1.set_yscale('squareroot')
@@ -761,6 +759,6 @@ class MarkovLog:
         plt.tight_layout()
         ax1.legend()
         ax2.legend()
-        plt.show()
+        self.dwell_time_graph = f
         return (openDwells, closedDwells, f)   
 
