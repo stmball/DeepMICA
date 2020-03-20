@@ -79,8 +79,14 @@ def getDiagonaliser(matrix):
     _, v = np.linalg.eig(matrix)
     normalizer = np.linalg.inv(v) @ np.ones((v.shape[0]))
     normalizer = np.tile(normalizer, (matrix.shape[0], 1))
-
-    return v * normalizer
+    preout = v * normalizer
+    a = list(range(preout.shape[0]))
+    b = sorted(list(range(preout.shape[0])), key=lambda item: preout[item,item])  
+    out = np.zeros_like(preout)
+    for i, j in zip(a,b):
+        out[:, j] = preout[:, i]
+    print(out)
+    return out
 
 
 def zeroSmalls(matrix):
@@ -498,7 +504,6 @@ class Network:
 
         newNewTrans = zeroSmalls(np.linalg.inv(
             diagonaliser) @ newTransMatrix @ diagonaliser)
-        print(rearrangeMap)
         return Network(states=newNewTrans.shape[0], transMatrix=newNewTrans, state_dict={f'{str(v)}': self.state_dict[list(self.state_dict.keys())[v]] for v in rearrangeMap})
 
     # From http://www.blackarbs.com/blog/introduction-hidden-markov-models-python-networkx-sklearn/2/9/2017
@@ -559,7 +564,7 @@ class MarkovLog:
         self.sd = None
         self.drift = None
 
-        self.discreet_history = None
+        self.discrete_history = None
         self.continuous_history = None
         self.sample_data_graph = None
         self.dwell_time_graph = None
@@ -600,15 +605,15 @@ class MarkovLog:
                     # Set the current state to the next state and restart loop
                     current_state = next_state_index
 
-            self.discreet_history = pd.DataFrame(
+            self.discrete_history = pd.DataFrame(
                 histList, columns=['State', 'Channels', 'Time Spent'])
 
             return self
 
     def simulateContinuous(self, sample_rate, sd, drift=False, **kwargs):
 
-        # Check to see if we have a discreet history
-        if not self.discreet_history:
+        # Check to see if we have a discrete history
+        if self.discrete_history is None:
             # If not, try and generate one using a time keyword arguement.
             if 'time' not in kwargs:
                 raise ValueError(
@@ -628,7 +633,7 @@ class MarkovLog:
         # Iterate through the event history and stitch together arrays with size proportional to the time spent on each state
         # TQDM included since this can take some time. Progress bars!
         print("Converting event list into continuous channel data \n")
-        pythonCmcHistoryList = list(self.discreet_history.values)
+        pythonCmcHistoryList = list(self.discrete_history.values)
         for row in tqdm(pythonCmcHistoryList):
             numberSamples = round(row[-1] * sample_rate)
             for _ in range(numberSamples):
@@ -708,7 +713,7 @@ class MarkovLog:
 
     def dwellTimeGraph(self, **kwargs):
          # Check to see if we have a continuous history
-        if not isinstance(self.discreet_history, type(pd.DataFrame())):
+        if not isinstance(self.discrete_history, type(pd.DataFrame())):
             # If not, try and generate one using keyword arguements.
             if not 'time' in kwargs:
                 raise ValueError(
@@ -723,7 +728,7 @@ class MarkovLog:
         openDwells = []
         closedDwells = []
         clutch = 0
-        for row in self.discreet_history.to_numpy():
+        for row in self.discrete_history.to_numpy():
             if row[1] == 0:
                 clutch += row[2]
             elif clutch > 0:
@@ -731,7 +736,7 @@ class MarkovLog:
                 clutch = 0
 
         clutch = 0
-        for row in self.discreet_history.to_numpy():
+        for row in self.discrete_history.to_numpy():
             if row[1] == 1:
                 clutch += row[2]
             elif clutch > 0:
