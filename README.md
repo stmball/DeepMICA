@@ -2,9 +2,9 @@
 
 DeepMICA (Deep Markovian Ion Channel Analysis) is a toolbox library for generating simulated ion channel currents from a kinetic model, preprocessing for deep learning pipelines, visualisation of simulations and model outputs, and advanced metric tools for comparing models.
 
-## Getting Started
+# Getting Started
 
-# Prerequisites
+## Prerequisites
 
 DeepMICA uses a number of packages to run:
 * numpy
