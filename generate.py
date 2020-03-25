@@ -13,6 +13,7 @@ from math import ceil
 from collections import defaultdict
 from functools import reduce
 import networkx as nx
+from colorednoise import powerlaw_psd_gaussian
 
 
 """
@@ -81,9 +82,10 @@ def getDiagonaliser(matrix):
     normalizer = np.tile(normalizer, (matrix.shape[0], 1))
     preout = v * normalizer
     a = list(range(preout.shape[0]))
-    b = sorted(list(range(preout.shape[0])), key=lambda item: preout[item,item])  
+    b = sorted(list(range(preout.shape[0])),
+               key=lambda item: preout[item, item])
     out = np.zeros_like(preout)
-    for i, j in zip(a,b):
+    for i, j in zip(a, b):
         out[:, j] = preout[:, i]
     print(out)
     return out
@@ -156,6 +158,7 @@ def createCycle(network, stateClasses):
     network[j][i] = 1
     return network
 
+
 def checkRandomCanonical(randoms, opens, closes):
     for block in [randoms[0:opens, opens:], randoms[opens:, 0:opens]]:
         if not np.array_equal(np.sum(block, axis=0), np.sort(np.sum(block, axis=0))):
@@ -164,6 +167,7 @@ def checkRandomCanonical(randoms, opens, closes):
             return False
         else:
             return True
+
 
 def sample_from_rate(rate):
     """
@@ -393,9 +397,6 @@ class Network:
                 # TODO: Extend to multi channel
                 randoms = np.multiply(adj, np.random.rand(*adj.shape) * mag)
                 flag = not checkRandomCanonical(randoms, opens, closes)
-
-
-            
         else:
             randoms = np.multiply(adj, np.random.rand(*adj.shape) * mag)
         # Fix the diagonal to be the negative sum of all other entries in that row
@@ -487,8 +488,8 @@ class Network:
         rearrangeMap = []
         partitions = []
         for (i, j) in sorted(_reference_dict.items(), key=lambda item: item[0]):
-            j.sort(key=lambda item: transMatrix[item,item])
-            
+            j.sort(key=lambda item: transMatrix[item, item])
+
             # Sort out partitioned matrix for diagonalisation
             newPartition = np.array([transMatrix[m, n] for m, n in it.product(
                 j, repeat=2)]).reshape((len(j), len(j)))
@@ -561,8 +562,7 @@ class MarkovLog:
 
         self.time = None
         self.sample_rate = None
-        self.sd = None
-        self.drift = None
+        self.noise = None
 
         self.discrete_history = None
         self.continuous_history = None
@@ -581,12 +581,14 @@ class MarkovLog:
             states_values = list(self.network.state_dict.values())
 
             # Randomly select first state
-            current_state = random.randint(0, len(self.network.transMatrix) - 1)
+            current_state = random.randint(
+                0, len(self.network.transMatrix) - 1)
             clock = 0
             with tqdm(total=time) as pbar:
                 while clock < time:
                     # Sample transitions
-                    sojourn_times = [sample_from_rate(rate) for rate in self.network.transMatrix[current_state]]
+                    sojourn_times = [sample_from_rate(
+                        rate) for rate in self.network.transMatrix[current_state]]
                     # Identify next state
                     next_state_index = min(
                         range(len(self.network.transMatrix)), key=lambda x: sojourn_times[x])
@@ -610,7 +612,7 @@ class MarkovLog:
 
             return self
 
-    def simulateContinuous(self, sample_rate, sd, drift=False, **kwargs):
+    def simulateContinuous(self, sample_rate, noise, **kwargs):
 
         # Check to see if we have a discrete history
         if self.discrete_history is None:
@@ -623,8 +625,7 @@ class MarkovLog:
                 self.simulateDiscrete(time=kwargs['time'])
 
         self.sample_rate = sample_rate
-        self.sd = sd
-        self.drift = drift
+        self.noise = noise
 
         # Interpolation stage
         ctsHistory = []
@@ -646,11 +647,7 @@ class MarkovLog:
             ctsHistory, columns=['State', 'Channels', 'Time'])
         # Adding gaussian noise to the data. NOTE: This noise isn't realistic. Much more going on in reality.
         print("Adding noise to current data")
-        noisy = ctsHistory[:, 1].astype(
-            'float') + sd * np.random.randn(ctsHistory[:, 1].shape[0])
-        # Adding drift to the data.
-        if drift:
-            noisy += drift[0] * np.sin(2 * np.pi * drift[1] * ctsHistoryDF['Time'].values.astype('float'))
+        noisy = self.noise.make_noisy(ctsHistory)
         ctsHistoryDF = pd.DataFrame(
             ctsHistory, columns=['State', 'Channels', 'Time'])
         ctsHistoryDF["Noisy Current"] = noisy
@@ -660,17 +657,15 @@ class MarkovLog:
     def sampleDataGraph(self, length, **kwargs):
 
         # Check to see if we have a continuous history
-        if not self.continuous_history:
+        if self.continuous_history is None:
             # If not, try and generate one using keyword arguements.
-            if not all(x in kwargs for x in ['sample_rate', 'sd']):
+            if not all(x in kwargs for x in ['sample_rate', 'noise']):
                 raise ValueError(
-                    'To get a sample data graph, a continuous data history needs to exist first. This cannot be done without sample_rate and sd keywords')
+                    'To get a sample data graph, a continuous data history needs to exist first. This cannot be done without sample_rate and noise keywords')
             else:
                 print('No continuous history found, Attempting to generate one now:')
-                if 'drift' not in kwargs:
-                    kwargs['drift'] = False
                 self.simulateContinuous(
-                    sample_rate=kwargs['sample_rate'], sd=kwargs['sd'], drift=kwargs['drift'], time=kwargs['time'])
+                    sample_rate=kwargs['sample_rate'], noise=kwargs['noise'], time=kwargs['time'])
         LENNY = int(length * self.sample_rate)
 
         # Truncate continuous history dataframe for performance
@@ -680,34 +675,37 @@ class MarkovLog:
         fig, ax = plt.subplots(figsize=(15, 5))
 
         ax.plot(truncctsHistoryDF['Time'], truncctsHistoryDF['Noisy Current'],
-                alpha=0.3, color='grey', ds="steps-mid")
-        ax.autoscale(enable=True, axis='both', tight=True)
+                alpha=0.75, color='grey', ds="steps-mid")
         ax.set_xlabel('Time (secs)')
         ax.set_ylabel('Current (nA)')
-        ax.set_xticks(np.linspace(0, LENNY, 10, endpoint=False))
+        ax.set_xticks(np.linspace(0, LENNY, 11))
         ax.set_xticklabels(np.round(np.linspace(
-            0, length, 10, endpoint=False), ceil(np.log10(length)) + 2))
+            0, length, 11), ceil(np.log10(length)) + 2))
         ax2 = ax.twinx()
-        ax2.autoscale(enable=True, axis='both', tight=True)
         ax2.set_ylabel('Channels Open')
+        ax2.set_xticks(np.linspace(0, LENNY, 11, endpoint=True))
+        ax2.set_xticklabels(np.round(np.linspace(
+            0, length, 11, endpoint=True), ceil(np.log10(length)) + 2))
+        ax2.set_ylim((-1, np.max(truncctsHistoryDF['Channels'].astype(
+            'float')) + 1))
+        ax2.set_yticks(
+            range(np.max(truncctsHistoryDF['Channels'].astype('int')) + 1))
+        labels = [str(i) for i in range(
+            np.max(truncctsHistoryDF['Channels'].astype('int')) + 1)]
+        ax2.set_yticklabels(labels)
         # Plot the number of channels open vs the time. Matplotlib doesn't let us do this with lines, so we have to use a dodgy scatter plot
-        sc = ax.scatter(truncctsHistoryDF['Time'], truncctsHistoryDF['Channels'].astype(
-            'float'), c=truncctsHistoryDF['State'].astype('category').cat.codes, s=10, marker="|")
+        sc = ax2.scatter(truncctsHistoryDF['Time'], truncctsHistoryDF['Channels'].astype(
+            'float'), c=truncctsHistoryDF['State'].astype('category').cat.codes, s=5, marker="|")
         # Legend comprimise
         def lp(i, j): return plt.plot([], color=sc.cmap(
             sc.norm(i)), mec="none", label=j, ls="", marker="o")[0]
         handles = [lp(i, j) for i, j in enumerate(
             np.unique(truncctsHistoryDF['State']))]
 
-        if self.drift:
-            maxi = ceil(self.sd + self.drift[0] + 1)
-        else:
-            maxi = ceil(self.sd + 1)
-
-        ax.set_ylim((-maxi, maxi + 1))
-        ax2.set_ylim((-maxi, maxi + 1))
+        ax.autoscale(enable=True, axis='x', tight=True)
+        ax2.autoscale(enable=True, axis='x', tight=True)
         plt.legend(handles=handles)
-
+        plt.tight_layout()
         self.sample_data_graph = fig
         return self
 
@@ -765,5 +763,50 @@ class MarkovLog:
         ax1.legend()
         ax2.legend()
         self.dwell_time_graph = f
-        return (openDwells, closedDwells, f)   
+        return (openDwells, closedDwells, f)
 
+
+class Noise:
+    """
+        Class for defining a noise pipeline for adding to a continuous time simulation.
+
+        Each noise layer should return a function that has inputs of the ctsHistory numpy array 
+        (See above) and a current array outputted from the previous layer. 
+        
+        Each noise layer needs to output a current of the same size as the input current, 
+        with whatever operations added modifying it.
+    """
+
+    def __init__(self):
+        self.sequence = []
+
+    def make_noisy(self, array, channels_index=1):
+        out = array[:, channels_index].astype('float')
+        for layer in self.sequence:
+            out = layer(array, out)
+        return out
+
+    def add(self, noise_layer):
+        self.sequence.append(noise_layer)
+
+# Noise layers - might change this to classes later on... not sure.
+
+
+def simple_f_noise(exponent, mean=0, sd=1):
+    def outfunc(array, current):
+        return current + powerlaw_psd_gaussian(exponent, current.shape[0]) * sd + mean
+    return outfunc
+
+
+def scaled_f_noise(exponent, scale_factor=2, mean=0, base_sd=1, channels_index=1):
+    def outfunc(array, current):
+        modifier = (scale_factor - 1) * \
+            array[:, channels_index].astype('float') + 1
+        return current + (base_sd * modifier) * powerlaw_psd_gaussian(exponent, current.shape[0]) + mean
+    return outfunc
+
+
+def sinusoidal_noise(amplitude, frequency, time_index=2):
+    def outfunc(array, current):
+        return current + amplitude * np.sin(2 * np.pi * frequency * array[:, time_index].astype('float'))
+    return outfunc
