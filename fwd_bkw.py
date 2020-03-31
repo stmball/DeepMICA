@@ -1,5 +1,4 @@
 # From wikipedia!
-
 def fwd_bkw(observations, states, start_prob, trans_prob, emm_prob, end_st):
     """Forward–backward algorithm."""
     # Forward part of the algorithm

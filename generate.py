@@ -253,7 +253,7 @@ class Network:
 
         Kwargs:
             adjMatrix (np.darray): Predefined adjacency matrix for network
-            transMatrix (np.darray): Predefined transition rate matrix for network
+            trans_matrix (np.darray): Predefined transition rate matrix for network
 
         Raises:
             TypeError: Adjacency matrix must be numpy array - error raised if 
@@ -313,20 +313,20 @@ class Network:
         else:
             self.adjMatrix = np.zeros((states, states))
 
-        if 'transMatrix' in kwargs:
-            transMatrix = kwargs['transMatrix']
+        if 'trans_matrix' in kwargs:
+            trans_matrix = kwargs['trans_matrix']
             # Check type is numpy array
-            if not isinstance(transMatrix, np.ndarray):
+            if not isinstance(trans_matrix, np.ndarray):
                 raise TypeError('Transition matrix must be numpy array.')
 
-            # Check transMatrix is square with rows and columns equal to the state arguement
-            elif transMatrix.shape != (states, states):
+            # Check trans_matrix is square with rows and columns equal to the state arguement
+            elif trans_matrix.shape != (states, states):
                 raise TypeError(
                     'Transition matrix dimensions must agree with number of states.')
 
-            # If all tests are clear, set transMatrix attribute to the kwarg
+            # If all tests are clear, set trans_matrix attribute to the kwarg
             else:
-                self.transMatrix = transMatrix
+                self.trans_matrix = trans_matrix
                 if 'adjMatrix' in kwargs and self.adjMatrix != self.generateAdjMatrix():
                     raise Warning(
                         'Transition matrix has non zero rates in positions where adjacency matrix has ones.')
@@ -335,7 +335,7 @@ class Network:
 
         # If no transition matrix is given, initalise an empty zero transition matrix
         else:
-            self.transMatrix = np.zeros((states, states))
+            self.trans_matrix = np.zeros((states, states))
 
         if 'state_dict' in kwargs:
             state_dict = kwargs['state_dict']
@@ -404,7 +404,7 @@ class Network:
             randoms[i, i] = -1 * (np.sum(randoms[i, :]) - randoms[i, i])
 
         # Set new transition matrix
-        self.transMatrix = randoms
+        self.trans_matrix = randoms
         return self
 
     def randomiseStates(self):
@@ -462,7 +462,7 @@ class Network:
 
     def generateAdjMatrix(self):
 
-        _non_zeros = self.transMatrix != 0
+        _non_zeros = self.trans_matrix != 0
         newMatrix = self.adjMatrix.copy()
         newMatrix[_non_zeros] = 1
         return newMatrix
@@ -478,7 +478,7 @@ class Network:
 
         # Partition network into submatrixes by state:
         state_dict = list(self.state_dict.values())
-        transMatrix = self.transMatrix
+        trans_matrix = self.trans_matrix
 
         _reference_dict = defaultdict(list)
 
@@ -488,24 +488,24 @@ class Network:
         rearrangeMap = []
         partitions = []
         for (i, j) in sorted(_reference_dict.items(), key=lambda item: item[0]):
-            j.sort(key=lambda item: transMatrix[item, item])
+            j.sort(key=lambda item: trans_matrix[item, item])
 
             # Sort out partitioned matrix for diagonalisation
-            newPartition = np.array([transMatrix[m, n] for m, n in it.product(
+            newPartition = np.array([trans_matrix[m, n] for m, n in it.product(
                 j, repeat=2)]).reshape((len(j), len(j)))
             partitions.append(newPartition)
 
             # Sort out rearranged matrix for final product
             rearrangeMap += j
 
-        newTransMatrix = np.array([transMatrix[m, n] for m, n in it.product(
-            rearrangeMap, repeat=2)]).reshape((len(transMatrix), len(transMatrix)))
+        new_trans_matrix = np.array([trans_matrix[m, n] for m, n in it.product(
+            rearrangeMap, repeat=2)]).reshape((len(trans_matrix), len(trans_matrix)))
 
         diagonaliser = reduce(directSum, map(getDiagonaliser, partitions))
 
         newNewTrans = zeroSmalls(np.linalg.inv(
-            diagonaliser) @ newTransMatrix @ diagonaliser)
-        return Network(states=newNewTrans.shape[0], transMatrix=newNewTrans, state_dict={f'{str(v)}': self.state_dict[list(self.state_dict.keys())[v]] for v in rearrangeMap})
+            diagonaliser) @ new_trans_matrix @ diagonaliser)
+        return Network(states=newNewTrans.shape[0], trans_matrix=newNewTrans, state_dict={f'{str(v)}': self.state_dict[list(self.state_dict.keys())[v]] for v in rearrangeMap})
 
     # From http://www.blackarbs.com/blog/introduction-hidden-markov-models-python-networkx-sklearn/2/9/2017
 
@@ -522,7 +522,7 @@ class Network:
         """
 
         model_df = pd.DataFrame(
-            self.transMatrix, columns=self.state_dict.keys(), index=self.state_dict.keys())
+            self.trans_matrix, columns=self.state_dict.keys(), index=self.state_dict.keys())
 
         edges_wts = _get_markov_edges(model_df)
 
@@ -566,11 +566,11 @@ class MarkovLog:
 
         self.discrete_history = None
         self.continuous_history = None
-        self.sample_data_graph = None
+        self.data_graph = None
         self.dwell_time_graph = None
 
-    def simulateDiscrete(self, time):
-        if self.network.transMatrix is None or self.network.state_dict is None:
+    def simulate_discrete(self, time):
+        if self.network.trans_matrix is None or self.network.state_dict is None:
             raise TypeError(
                 'No model loaded. Please load a model using the load_from_network or load_from_csv methods.')
         else:
@@ -582,16 +582,16 @@ class MarkovLog:
 
             # Randomly select first state
             current_state = random.randint(
-                0, len(self.network.transMatrix) - 1)
+                0, len(self.network.trans_matrix) - 1)
             clock = 0
             with tqdm(total=time) as pbar:
                 while clock < time:
                     # Sample transitions
                     sojourn_times = [sample_from_rate(
-                        rate) for rate in self.network.transMatrix[current_state]]
+                        rate) for rate in self.network.trans_matrix[current_state]]
                     # Identify next state
                     next_state_index = min(
-                        range(len(self.network.transMatrix)), key=lambda x: sojourn_times[x])
+                        range(len(self.network.trans_matrix)), key=lambda x: sojourn_times[x])
 
                     # Add histories
                     sojourn_time = sojourn_times[next_state_index]
@@ -612,7 +612,7 @@ class MarkovLog:
 
             return self
 
-    def simulateContinuous(self, sample_rate, noise, **kwargs):
+    def simulate_continuous(self, sample_rate, noise, **kwargs):
 
         # Check to see if we have a discrete history
         if self.discrete_history is None:
@@ -622,7 +622,7 @@ class MarkovLog:
                     'If running a continuous simulation before a discrete simulation, please add a "time" arguement')
             else:
                 print('No discrete history found, generating now')
-                self.simulateDiscrete(time=kwargs['time'])
+                self.simulate_discrete(time=kwargs['time'])
 
         self.sample_rate = sample_rate
         self.noise = noise
@@ -654,7 +654,7 @@ class MarkovLog:
         self.continuous_history = ctsHistoryDF
         return self
 
-    def sampleDataGraph(self, length, **kwargs):
+    def sample_data_graph(self, length, **kwargs):
 
         # Check to see if we have a continuous history
         if self.continuous_history is None:
@@ -664,7 +664,7 @@ class MarkovLog:
                     'To get a sample data graph, a continuous data history needs to exist first. This cannot be done without sample_rate and noise keywords')
             else:
                 print('No continuous history found, Attempting to generate one now:')
-                self.simulateContinuous(
+                self.simulate_continuous(
                     sample_rate=kwargs['sample_rate'], noise=kwargs['noise'], time=kwargs['time'])
         LENNY = int(length * self.sample_rate)
 
@@ -706,7 +706,7 @@ class MarkovLog:
         ax2.autoscale(enable=True, axis='x', tight=True)
         plt.legend(handles=handles)
         plt.tight_layout()
-        self.sample_data_graph = fig
+        self.data_graph = fig
         return self
 
     def dwellTimeGraph(self, **kwargs):
@@ -718,7 +718,7 @@ class MarkovLog:
                     'To get a dwell time graph, a discrete data history needs to exist first. This cannot be done without the time arguement')
             else:
                 print('No discrete history found, Attempting to generate one now:')
-                self.simulateDiscrete(time=kwargs['time'])
+                self.simulate_discrete(time=kwargs['time'])
 
         print("Processing dwells")
         # Note: Only works for open/closed datasets
@@ -809,4 +809,17 @@ def scaled_f_noise(exponent, scale_factor=2, mean=0, base_sd=1, channels_index=1
 def sinusoidal_noise(amplitude, frequency, time_index=2):
     def outfunc(array, current):
         return current + amplitude * np.sin(2 * np.pi * frequency * array[:, time_index].astype('float'))
+    return outfunc
+
+
+def relaxation_noise_opens(decay_speed, decay_factor, channels_index=1):
+    def outfunc(array, current):
+        counts = 0
+        for i in range(len(array)):
+            if int(array[i,channels_index]) == 1:
+                current[i] += decay_factor * (np.exp(-decay_speed * counts) - 1)
+                counts += 1
+            else:
+                counts = 0
+        return current
     return outfunc
