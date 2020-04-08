@@ -1,6 +1,16 @@
 import numpy as np
 from scipy.linalg import expm
 from tqdm import tqdm
+from time import sleep
+
+def dict_norm(dicto):
+    out = {}
+    norm = sum(dicto.values())
+    for key, value in dicto.items():
+        out[key] = value / norm
+
+    return out
+
 
 
 def calculate_recurrrent_term(new_state_index, last_state_probs, trans_matrix):
@@ -37,6 +47,17 @@ def calculate_other_terms(pi, q_square, q_not_square, t_c):
     return 1 - a
     # return pi @ np.linalg.inv(q_square) @ (np.exp(q_square * t_c) @ q_not_square @ np.ones((1, q_not_square.shape[1]))).T
 
+def normalise_trans_matrix(trans_matrix):
+    # Transform trans_matrix into normalised form - rows sum to one.
+    new_trans = np.copy(trans_matrix).astype('float64')
+    for idx, row in enumerate(new_trans):
+        for idy, col in enumerate(row):
+            if col < 0:
+                new_trans[idx, idy] = 0
+        a = row / row.sum(0)
+        new_trans[idx, :] = a
+
+    return new_trans
 
 def generate_emission_matrix(log):
     # Get important values from MarkovLog object
@@ -56,13 +77,7 @@ def generate_emission_matrix(log):
     q_oc = np.zeros((len(opens), len(closeds)))
 
     # Transform trans_matrix into normalised form - rows sum to one.
-    new_trans = np.copy(trans_matrix).astype('float64')
-    for idx, row in enumerate(new_trans):
-        for idy, col in enumerate(row):
-            if col < 0:
-                new_trans[idx, idy] = 0
-        a = row / row.sum(0)
-        new_trans[idx, :] = a
+    new_trans = normalise_trans_matrix(trans_matrix)
 
     # Populate q_oo, q_cc, q_co, q_oc
     for (state_one, state_two, matrix) in [(opens, opens, q_oo), (closeds, closeds, q_cc), (closeds, opens, q_co), (opens, closeds, q_oc)]:
@@ -92,6 +107,7 @@ def generate_emission_matrix(log):
                     # First, calculate the recurrent term P(S_t = s).
                     if first_time:
                         recurrent_term = 1.0
+                        first_time = False
                     else:
                         recurrent_term = calculate_recurrrent_term(
                             i, prev_row_probs, new_trans)
@@ -145,6 +161,7 @@ def generate_emission_matrix(log):
                     # Iterate through open states and calculate probability of being here given the observed open dwell time.
                     # First, calculate the recurrent term P(S_t = s).
                     if first_time:
+                        recurrent_term = 1.0
                         first_time = False
                     else:
                         recurrent_term = calculate_recurrrent_term(
@@ -195,105 +212,83 @@ def generate_emission_matrix(log):
         # print(row_probs)
         probabilities.append(row_probs)
         #print(f'FINISHED AN ITERATION\n {row_probs} \n \n ')
-    return np.array(probabilities)[1:]
+    return np.squeeze(np.array(probabilities)[1:])
 
-# From wikipedia!
+# Edited from http://www.adeveloperdiary.com/data-science/machine-learning/forward-and-backward-algorithm-in-hidden-markov-model/
 
-
-def fwd_bkw(observations, states, start_prob, trans_prob, emm_prob, end_st):
-    """Forward–backward algorithm."""
-    # Forward part of the algorithm
-    fwd = []
-    f_prev = {}
-    for i, observation_i in enumerate(observations):
-        f_curr = {}
-        for st in states:
-            if i == 0:
-                # base case for the forward part
-                prev_f_sum = start_prob[st]
-            else:
-                prev_f_sum = sum(f_prev[k]*trans_prob[k][st] for k in states)
-
-            f_curr[st] = emm_prob[st][observation_i] * prev_f_sum
-
-        fwd.append(f_curr)
-        f_prev = f_curr
-
-    p_fwd = sum(f_curr[k] * trans_prob[k][end_st] for k in states)
-
-    # Backward part of the algorithm
-    bkw = []
-    b_prev = {}
-    for i, observation_i_plus in enumerate(reversed(observations[1:]+(None,))):
-        b_curr = {}
-        for st in states:
-            if i == 0:
-                # base case for backward part
-                b_curr[st] = trans_prob[st][end_st]
-            else:
-                b_curr[st] = sum(trans_prob[st][l] * emm_prob[l]
-                                 [observation_i_plus] * b_prev[l] for l in states)
-
-        bkw.insert(0, b_curr)
-        b_prev = b_curr
-
-    p_bkw = sum(start_prob[l] * emm_prob[l]
-                [observations[0]] * b_curr[l] for l in states)
-
-    # Merging the two parts
-    posterior = []
-    for i in range(len(observations)):
-        posterior.append(
-            {st: fwd[i][st] * bkw[i][st] / p_fwd for st in states})
-
-    assert p_fwd == p_bkw
-    return fwd, bkw, posterior
+def forward(V, a, b, initial_distribution):
+    alpha = np.zeros((V.shape[0], a.shape[0]))
+    alpha[0, :] = initial_distribution * b[:, 0]
+ 
+    for t in range(1, V.shape[0]):
+        for j in range(a.shape[0]):
+            # Matrix Computation Steps
+            #                  ((1x2) . (1x2))      *     (1)
+            #                        (1)            *     (1)
+            alpha[t, j] = alpha[t - 1].dot(a[:, j]) * b[j, t]
+        alpha[t, :] = alpha[t, :]/np.sum(alpha[t, :])
+    return alpha
 
 
-def viterbi(obs, states, start_p, trans_p, emit_p):
+def backward(V, a, b):
+    beta = np.zeros((V.shape[0], a.shape[0]))
+ 
+    # setting beta(T) = 1
+    beta[V.shape[0] - 1] = np.ones((a.shape[0]))
+ 
+    # Loop in backward way from T-1 to
+    # Due to python indexing the actual loop will be T-2 to 0
+    for t in range(V.shape[0] - 2, -1, -1):
+        for j in range(a.shape[0]):
+            beta[t, j] = (beta[t + 1] * b[:, t + 1]).dot(a[j, :])
+        beta[t, :] = beta[t, :]/np.sum(beta[t, :])    
+    return beta
 
-    V = [{}]
-    for st in states:
-        V[0][st] = {"prob": start_p[st] * emit_p[st][obs[0]], "prev": None}
+def viterbi(V, a, b, initial_distribution):
+    T = V.shape[0]
+    M = a.shape[0]
+ 
+    omega = np.zeros((T, M))
+    omega[0, :] = np.log(initial_distribution * b[:, 0])
+ 
+    prev = np.zeros((T - 1, M))
+ 
+    for t in range(1, T):
+        for j in range(M):
+            # Same as Forward Probability
+            probability = omega[t - 1] + np.log(a[:, j]) + np.log(b[j, t])
+ 
+            # This is our most probable state given previous state at time t (1)
+            prev[t - 1, j] = np.argmax(probability)
+ 
+            # This is the probability of the most probable state (2)
+            omega[t, j] = np.max(probability)
+ 
+    # Path Array
+    S = np.zeros(T)
+ 
+    # Find the most probable last hidden state
+    last_state = np.argmax(omega[T - 1, :])
+ 
+    S[0] = last_state
+ 
+    backtrack_index = 1
+    for i in range(T - 2, -1, -1):
+        S[backtrack_index] = prev[i, int(last_state)]
+        last_state = prev[i, int(last_state)]
+        backtrack_index += 1
+ 
+    # Flip the path array since we were backtracking
+    S = np.flip(S, axis=0)
+ 
+    return S
 
-    # Run Viterbi when t > 0
-
-    for t in range(1, len(obs)):
-        V.append({})
-
-        for st in states:
-            max_tr_prob = V[t-1][states[0]]["prob"]*trans_p[states[0]][st]
-            prev_st_selected = states[0]
-
-            for prev_st in states[1:]:
-                tr_prob = V[t-1][prev_st]["prob"]*trans_p[prev_st][st]
-                
-                if tr_prob > max_tr_prob:
-                    max_tr_prob = tr_prob
-                    prev_st_selected = prev_st
-
-            max_prob = max_tr_prob * emit_p[st][obs[t]]
-            V[t][st] = {"prob": max_prob, "prev": prev_st_selected}
-
-
-    opt = []
-    max_prob = 0.0
-    previous = None
-
-    # Get most probable state and its backtrack
-
-    for st, data in V[-1].items():
-        if data["prob"] > max_prob:
-            max_prob = data["prob"]
-            best_st = st
-
-    opt.append(best_st)
-    previous = best_st
-
-    # Follow the backtrack till the first observation
-
-    for t in range(len(V) - 2, -1, -1):
-        opt.insert(0, V[t + 1][previous]["prev"])
-        previous = V[t + 1][previous]["prev"]
-
-    return opt, max_prob
+def forward_backward(V, a, b, initial_distribution):
+    alphas = forward(V, a, b, initial_distribution)
+    betas = backward(V, a, b)
+    posterior = np.zeros_like(alphas)
+    for i in range(len(posterior)):
+        posterior[i, :] = alphas[i, :] * betas[i, :]
+        posterior[i, :] = posterior[i, :]/np.sum(posterior[i, :])
+    
+    return posterior
