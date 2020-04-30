@@ -664,8 +664,11 @@ class MarkovLog:
                     'To get a sample data graph, a continuous data history needs to exist first. This cannot be done without sample_rate and noise keywords')
             else:
                 print('No continuous history found, Attempting to generate one now:')
-                self.simulate_continuous(
-                    sample_rate=kwargs['sample_rate'], noise=kwargs['noise'], time=kwargs['time'])
+                if 'time' in kwargs:
+                    self.simulate_continuous(sample_rate=kwargs['sample_rate'], noise=kwargs['noise'], time=kwargs['time'])
+                else:
+                    self.simulate_continuous(sample_rate=kwargs['sample_rate'], noise=kwargs['noise'])
+
         LENNY = int(length * self.sample_rate)
 
         # Truncate continuous history dataframe for performance

@@ -86,8 +86,7 @@ def generate_emission_matrix(log):
                 matrix[idi, idj] = trans_matrix[i[0], j[0]]
 
     # Get first state and create a vector with all zeros apart from a 1 where the first state is.
-    first_state = list(
-        filter(lambda x: x[1][0] == discrete_history['State'].values[0], indexes))[0][0]
+    first_state = list(filter(lambda x: x[1][0] == discrete_history['State'].values[0], indexes))[0][0]
     pi = np.zeros(trans_matrix.shape[0])
     pi[first_state] = 1
     pi = pi.reshape((1, len(pi)))
@@ -105,30 +104,32 @@ def generate_emission_matrix(log):
                 if i in [j[0] for j in opens]:
                     # Iterate through open states and calculate probability of being here given the observed open dwell time.
                     # First, calculate the recurrent term P(S_t = s).
-                    if first_time:
+                    
+                    # Find the index in the open states list that corresponds to the current state
+                    for idx, open_state in enumerate(opens):
+                        if i == open_state[0]:
+                            index = idx
+                            break
+                    
+                    if first_time and i == first_state:
                         recurrent_term = 1.0
                         first_time = False
                     else:
                         recurrent_term = calculate_recurrrent_term(
                             i, prev_row_probs, new_trans)
 
-                    #print(f'Recurrent term: {recurrent_term}')
-
                     # Calculate numerator emission probability P(e_t >= e | S_t = s)
                     num_pi = np.zeros(len(opens))
 
-                    # Find the index in the open states list that corresponds to the current state
-                    for idx, open_state in enumerate(opens):
-                        if i == open_state[0]:
-                            index = idx
-                            break
+
+
+
                     num_pi[index] = 1
                     num_pi = num_pi.reshape((1, len(num_pi)))
 
                     # Calculate probability
                     num_other = calculate_other_terms(
                         num_pi, q_oo, q_oc, row[2])[0, 0]
-                    #print(f'Numerator term: {num_other}')
 
                     # Calculate denominator emission probability P(e_t >= e)
                     # Find indexes of probability vector that correspond to open states
@@ -136,7 +137,6 @@ def generate_emission_matrix(log):
                     for k in opens:
                         if k[1][1] == 0:
                             open_indexes.append(k[0])
-                    # print(open_indexes)
 
                     # Get the vector of previous row probabilies for only open indexes
                     dem_pi = np.array([prev_row_probs[0, p]
@@ -146,9 +146,9 @@ def generate_emission_matrix(log):
                     # Calculate probability
                     dem_other = calculate_other_terms(
                         dem_pi, q_oo, q_oc, row[2])[0, 0]
-                    #print(f'Denominator term: {dem_other}')
 
                     # Calculate total probability and add to overall event probability vector
+
                     prob = num_other * recurrent_term / dem_other
                     row_probs.append(prob)
 
@@ -160,7 +160,15 @@ def generate_emission_matrix(log):
                 if i in [j[0] for j in closeds]:
                     # Iterate through open states and calculate probability of being here given the observed open dwell time.
                     # First, calculate the recurrent term P(S_t = s).
-                    if first_time:
+                    
+                    
+                    for idx, closed_state in enumerate(closeds):
+                        if i == closed_state[0]:
+                            index = idx
+                            break
+                    
+
+                    if first_time and i == first_state:
                         recurrent_term = 1.0
                         first_time = False
                     else:
@@ -168,50 +176,38 @@ def generate_emission_matrix(log):
                             i, prev_row_probs, new_trans)
 
                     num_pi = np.zeros(len(closeds))
-                    # print(i)
 
                     for idx, closed_state in enumerate(closeds):
                         if i == closed_state[0]:
                             index = idx
                             break
-                    # print(index)
                     num_pi[index] = 1
 
                     num_pi = num_pi.reshape((1, len(num_pi)))
                     num_other = calculate_other_terms(
                         num_pi, q_cc, q_co, row[2])[0, 0]
-                    #print(f'Numerator term: {num_other}')
 
                     closed_indexes = []
                     for k in closeds:
                         if k[1][1] == 1:
                             closed_indexes.append(k[0])
-                    # print(closed_indexes)
 
                     dem_pi = np.array([prev_row_probs[0, p]
                                        for p in closed_indexes])
                     dem_pi = np.reshape(dem_pi, (1, len(dem_pi)))
-                    # print(dem_pi)
 
                     dem_other = calculate_other_terms(
                         dem_pi, q_cc, q_co, row[2])[0, 0]
-                    #print(f'Denominator term: {dem_other}')
 
                     prob = num_other * recurrent_term / dem_other
                     row_probs.append(prob)
-                    #print(f'\nProbability is: {prob}\n')
                 else:
                     row_probs.append(0)
-                    #print(f'\nProbability is: 0\n')
 
-        # print(row_probs)
         row_probs = np.array(row_probs)
         row_probs = row_probs / row_probs.sum(0)
-        # print(row_probs)
         row_probs = np.reshape(row_probs, (1, len(row_probs)))
-        # print(row_probs)
         probabilities.append(row_probs)
-        #print(f'FINISHED AN ITERATION\n {row_probs} \n \n ')
     return np.squeeze(np.array(probabilities)[1:])
 
 # Edited from http://www.adeveloperdiary.com/data-science/machine-learning/forward-and-backward-algorithm-in-hidden-markov-model/
