@@ -5,6 +5,10 @@ from .analysis import stateReduce
 from sklearn.preprocessing import MinMaxScaler
 
 
+"""
+    Visualisation module
+"""
+
 
 def epoch_graph(history, filepath):
     """ 
@@ -27,7 +31,8 @@ def epoch_graph(history, filepath):
     f.savefig(filepath)
 
 
-def comparison_graph(PPData, y_trueArg, y_predictArg, start_time=0, lensec=0.2):
+def model_comparison_graph(PPData, y_trueArg, y_predictArg, start_time=0, lensec=0.2):
+
     """
         Function for graphing and comparing model performance with raw data input.
     """
@@ -86,5 +91,7 @@ def comparison_graph(PPData, y_trueArg, y_predictArg, start_time=0, lensec=0.2):
     ax3.set_xticklabels(np.round(np.linspace(
         start_time, start_time + lensec, 11, endpoint=True), ceil(np.log10(lensec)) + 2))
     ax3.legend()
+
+
 
     return f

@@ -15,6 +15,9 @@ from functools import reduce
 import networkx as nx
 from colorednoise import powerlaw_psd_gaussian
 
+from .fwd_bkw import viterbi, forward_backward, generate_emission_matrix, normalise_trans_matrix
+
+
 
 """
 
@@ -167,6 +170,14 @@ def checkRandomCanonical(randoms, opens, closes):
             return False
         else:
             return True
+
+
+def check_markov_form(trans_matrix):
+    for idx, row in enumerate(trans_matrix):
+        if row[idx] != -sum(np.delete(row, idx)):
+            return False
+    else:
+        return True
 
 
 def sample_from_rate(rate):
@@ -324,6 +335,8 @@ class Network:
                 raise TypeError(
                     'Transition matrix dimensions must agree with number of states.')
 
+            elif not check_markov_form(kwargs['trans_matrix']):
+                raise ValueError('Transition matrix must be in proper Markov form - entries on the diagonal should equal the negative sum of the other row elements.')
             # If all tests are clear, set trans_matrix attribute to the kwarg
             else:
                 self.trans_matrix = trans_matrix
@@ -350,6 +363,9 @@ class Network:
         # If no transition matrix is given, initalise an empty zero transition matrix
         else:
             self.state_dict = {}
+
+    def check_markov_form(self):
+        return check_markov_form(self.trans_matrix)
 
     def randomiseAdj(self):
         """ 
@@ -569,6 +585,8 @@ class MarkovLog:
         self.data_graph = None
         self.dwell_time_graph = None
 
+        self.analysis_complete = False
+
     def simulate_discrete(self, time):
         if self.network.trans_matrix is None or self.network.state_dict is None:
             raise TypeError(
@@ -634,25 +652,92 @@ class MarkovLog:
         # Iterate through the event history and stitch together arrays with size proportional to the time spent on each state
         # TQDM included since this can take some time. Progress bars!
         print("Converting event list into continuous channel data \n")
-        pythonCmcHistoryList = list(self.discrete_history.values)
-        for row in tqdm(pythonCmcHistoryList):
-            numberSamples = round(row[-1] * sample_rate)
+        pythonCmcHistoryList = self.discrete_history.drop(['Time Spent'], axis=1).values.tolist()
+        time_spent = self.discrete_history[['Time Spent']].values.tolist()
+
+        for row, time in tqdm(zip(pythonCmcHistoryList, time_spent)):
+            numberSamples = round(time[0] * sample_rate)
             for _ in range(numberSamples):
-                ctsHistory.append([row[0], row[1], currentTime])
+                ctsHistory.append([*row, currentTime])
                 currentTime += increment
+
         ctsHistory = np.array(ctsHistory)
         print("Continuous simulation Complete")
         # Clean up and give both numpy and pandas formats
-        ctsHistoryDF = pd.DataFrame(
-            ctsHistory, columns=['State', 'Channels', 'Time'])
-        # Adding gaussian noise to the data. NOTE: This noise isn't realistic. Much more going on in reality.
+        column_names = ['State', 'Channels', *[f'fwd_bwk_{i}' for i in self.network.state_dict.keys()], 'Viterbi', 'Time'] if self.analysis_complete else ['State', 'Channels', 'Time']
+        ctsHistoryDF = pd.DataFrame(ctsHistory, columns=column_names)
+        # Adding noise to data
         print("Adding noise to current data")
         noisy = self.noise.make_noisy(ctsHistory)
-        ctsHistoryDF = pd.DataFrame(
-            ctsHistory, columns=['State', 'Channels', 'Time'])
         ctsHistoryDF["Noisy Current"] = noisy
         self.continuous_history = ctsHistoryDF
         return self
+
+    def viterbi_analysis(self):
+        # Not very OOP. Refactor?
+        emission = np.transpose(generate_emission_matrix(self)).tolist()
+        obs = self.discrete_history['Time Spent'].values.tolist()
+        states = [i for i in range(len(self.network.state_dict.values()))]
+        trans_matrix = normalise_trans_matrix(self.network.trans_matrix).tolist()
+        indexes = list(enumerate(self.network.state_dict.items()))
+        end_st = int(list(filter(lambda x: x[1][0] == self.discrete_history['State'].values[-1], indexes))[0][0])
+        first_state = list(filter(lambda x: x[1][0] == self.discrete_history['State'].values[0], indexes))[0][0]
+        a = normalise_trans_matrix(self.network.trans_matrix)
+
+        pi = np.zeros(len(trans_matrix))
+        pi[first_state] = 1
+        fwd_bwk = forward_backward(self.discrete_history['Time Spent'].values, a, np.array(emission), pi)
+        viterbi_hist = viterbi(self.discrete_history['Time Spent'].values, a, np.array(emission), pi)
+
+        self.discrete_history = self.discrete_history.join(pd.DataFrame(fwd_bwk, columns=[f'fwd_bwk_{i}' for i in self.network.state_dict.keys()]), rsuffix='fwd_bwk_state')
+        self.discrete_history['Viterbi'] = viterbi_hist
+        print(self.discrete_history)
+        self.analysis_complete = True
+
+    def viterbi_comparison_graph(self, length):
+        if not self.analysis_complete:
+            raise ValueError('No Viterbi analysis found, please run the viterbi analysis method!')
+        
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1)
+        LENNY = int(length * self.sample_rate)
+        truncated_history_df = self.continuous_history[:LENNY]
+        ax1.plot(truncated_history_df['Time'], truncated_history_df['Noisy Current'])
+        ax1.set_xlabel('Time (secs)')
+        ax1.set_ylabel('Current (nA)')
+        ax1.set_xticks(np.linspace(0, LENNY, 11))
+        ax1.set_xticklabels(np.round(np.linspace(
+            0, length, 11), ceil(np.log10(length)) + 2))
+
+
+        states = list(map(float, [list(self.network.state_dict.keys()).index(i) for i in truncated_history_df['State']]))
+        ax2.plot(truncated_history_df['Time'], truncated_history_df['Viterbi'].values.astype(float), drawstyle='steps-mid', linestyle='--', alpha=0.8, label='Viterbi')
+        ax2.plot(truncated_history_df['Time'], states, drawstyle='steps-mid', linestyle=':', alpha=0.8, label='Simulation')
+        ax2.set_xticks(np.linspace(0, LENNY, 11))
+        ax2.set_xticklabels(np.round(np.linspace(
+            0, length, 11), ceil(np.log10(length)) + 2))
+
+        ax2.set_xlabel('Time (secs)')
+        ax2.set_ylabel('State')
+        ax2.legend()
+
+        a = truncated_history_df[[f'fwd_bwk_{i}' for i in self.network.state_dict.keys()]].values.astype(float).T
+        ax3.imshow(a, aspect='auto', interpolation='none', cmap='Reds')
+        
+        ax3.set_xticks(np.linspace(0, LENNY, 11))
+        ax3.set_xticklabels(np.round(np.linspace(
+            0, length, 11), ceil(np.log10(length)) + 2))
+
+        ax3.set_xlabel('Time (secs)')
+        ax3.set_ylabel('State')
+        ax3.invert_yaxis()
+
+        plt.tight_layout()
+        ax1.autoscale(enable=True, axis='x', tight=True)
+        ax2.autoscale(enable=True, axis='x', tight=True)
+
+
+
+        
 
     def sample_data_graph(self, length, **kwargs):
 
@@ -791,6 +876,8 @@ class Noise:
 
     def add(self, noise_layer):
         self.sequence.append(noise_layer)
+
+
 
 # Noise layers - might change this to classes later on... not sure.
 
